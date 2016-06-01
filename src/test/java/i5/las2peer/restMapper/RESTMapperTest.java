@@ -56,8 +56,8 @@ public class RESTMapperTest {
 			String contentType, String returnType, Pair<String>[] httpHeaders, String assertionMessage,
 			String assertion) throws Exception {
 		StringBuilder warnings = new StringBuilder();
-		InvocationData[] invocation = RESTMapper.parse(tree, httpMethod, uri, variables, content, contentType,
-				returnType, httpHeaders, warnings);
+		InvocationData[] invocation = RESTMapper.parse(tree, httpMethod, uri, variables, content.getBytes(),
+				contentType, returnType, httpHeaders, warnings);
 		// if (warnings.length()>0) System.out.println(warnings.toString());
 		if (invocation.length == 0) {
 			throw new Exception("no method found for " + assertionMessage);
@@ -288,7 +288,7 @@ public class RESTMapperTest {
 			String accept = "text/*;q=0.3, text/html;q=0.7, text/html;level=1, text/html;level=2;q=0.4, */*;q=0.5,audio/*";
 			String[] result = RESTMapper.getAcceptedTypes(accept);
 			assertEquals("Wrong Accept header sorting",
-					"text/html;level=1 audio/\\w+ text/html \\w+/\\w+ text/html;level=2 text/\\w+",
+					"text/html;level=1 audio/.* text/html .*/.* text/html;level=2 text/.*",
 					RESTMapper.join(result, " "));
 		} catch (Throwable e) {
 			e.printStackTrace();

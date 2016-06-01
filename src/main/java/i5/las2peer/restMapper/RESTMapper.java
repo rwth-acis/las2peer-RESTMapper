@@ -9,6 +9,7 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -201,17 +202,15 @@ public class RESTMapper {
 				methodNode.setAttribute(PATH_TAG, path);
 			methodNode.setAttribute(TYPE_TAG, (method.getReturnType().getName()));
 
-			String consumes;
 			if (httpMethod.equals(POST) || httpMethod.equals(PUT)) { // @consumes only for POST requests
 				if (method.isAnnotationPresent(Consumes.class)) { // local method @Consumes overrides global class
 																	// @Consumes
-					consumes = join(method.getAnnotation(Consumes.class).value(), DEFAULT_MIME_SEPARATOR);
+					String consumes = join(method.getAnnotation(Consumes.class).value(), DEFAULT_MIME_SEPARATOR);
 					methodNode.setAttribute(CONSUMES_TAG, consumes.trim());
 				}
 			}
-			String produces;
 			if (method.isAnnotationPresent(Produces.class)) { // local method @Consumes overrides global class @Consumes
-				produces = join(method.getAnnotation(Produces.class).value(), DEFAULT_MIME_SEPARATOR);
+				String produces = join(method.getAnnotation(Produces.class).value(), DEFAULT_MIME_SEPARATOR);
 				methodNode.setAttribute(PRODUCES_TAG, produces.trim());
 			}
 
@@ -562,7 +561,7 @@ public class RESTMapper {
 	 * @param httpMethod HTTP method of the request
 	 * @param uri URI path of the request
 	 * @param variables array of parameter/value pairs of the request (query variables)
-	 * @param content content of the HTTP body
+	 * @param rawContent content of the HTTP body as binary format
 	 * @param contentType MIME-type of the data sent in the POST/PUT request
 	 * @param returnType Accept HTTP Header
 	 * @param headers headers given by the client
@@ -571,8 +570,8 @@ public class RESTMapper {
 	 * @throws Exception
 	 */
 	public static InvocationData[] parse(PathTree tree, String httpMethod, String uri, Pair<String>[] variables,
-			String content, String contentType, String returnType, Pair<String>[] headers, StringBuilder warnings)
-					throws Exception {
+			byte[] rawContent, String contentType, String returnType, Pair<String>[] headers, StringBuilder warnings)
+			throws Exception {
 
 		if (!contentType.isEmpty()) {
 			int consumesParamSeparator = contentType.indexOf(DEFAULT_MIME_PARAMETER_SEPARATOR);
@@ -621,8 +620,8 @@ public class RESTMapper {
 					for (String paramName : paramNames) {
 						// the uri split is still URL encoded, so first decode
 						String uriValue = java.net.URLDecoder.decode(anUriSplit, "UTF-8");
-						parameterValues.put(paramName.toLowerCase(), uriValue); // map the value provided in the URI path to the
-																	// stored parameter names
+						// map the value provided in the URI path to the stored parameter names
+						parameterValues.put(paramName.toLowerCase(), uriValue);
 					}
 
 				} else {
@@ -708,7 +707,14 @@ public class RESTMapper {
 
 				if (param.getAnnotation() != null && param.getAnnotation().equals(CONTENT_ANNOTATION)) {
 					// if it's a content annotation
-					values[j] = (Serializable) RESTMapper.castToType(content, param.getType());
+					if ((contentType.isEmpty() || contentType.startsWith("text/"))
+							&& !param.getType().equals(byte[].class)) {
+						// map content value to String
+						values[j] = (Serializable) RESTMapper.castToType(new String(rawContent, StandardCharsets.UTF_8),
+								param.getType());
+					} else {
+						values[j] = rawContent;
+					}
 					// fill it with the given content
 					types[j] = param.getType();
 				} else if (param.getAnnotation() != null && param.getAnnotation().equals(HEADERS_ANNOTATION)) {
@@ -719,8 +725,9 @@ public class RESTMapper {
 				} else {
 					if (param.getName() != null && parameterValues.containsKey(param.getName().toLowerCase())) {
 						// if parameter has a name (given by an annotation) and a value given
-						values[j] = (Serializable) RESTMapper.castToType(parameterValues.get(param.getName().toLowerCase()),
-								param.getType()); // use the created value mapping to assign a value
+						// use the created value mapping to assign a value
+						values[j] = (Serializable) RESTMapper
+								.castToType(parameterValues.get(param.getName().toLowerCase()), param.getType());
 						types[j] = param.getType();
 					} else if (param.hasDefaultValue()) { // if no name, then look for default value
 						values[j] = (Serializable) param.getDefaultValue();
@@ -774,13 +781,13 @@ public class RESTMapper {
 	 * @return sorted array (by priority) of acceptable MIME Types
 	 */
 	protected static String[] getAcceptedTypes(String returnType) {
-		if (returnType.isEmpty())
+		if (returnType.isEmpty() || ACCEPT_ALL_MIME_TYPES.equals(returnType)) {
 			return new String[] { ACCEPT_ALL_MIME_TYPES };
-
+		}
 		String[] returnTypeMediaRange = returnType.split(DEFAULT_MIME_SEPARATOR);
-		ArrayList<AcceptHeaderType> accepts = new ArrayList<AcceptHeaderType>();
-		for (int i = 0; i < returnTypeMediaRange.length; i++) {
-			String media = returnTypeMediaRange[i].trim();
+		ArrayList<AcceptHeaderType> accepts = new ArrayList<>();
+		for (String media : returnTypeMediaRange) {
+			media = media.trim();
 			int qvaluePos = media.indexOf(";q=");
 			float qvalue = 1;
 
@@ -790,22 +797,17 @@ public class RESTMapper {
 				} catch (NumberFormatException e) {
 					qvalue = 1;
 				}
-
 				media = media.substring(0, qvaluePos);
-
 			}
-
 			accepts.add(new AcceptHeaderType(media, qvalue));
-
 		}
 		Collections.sort(accepts, new AcceptHeaderTypeComperator());
-		String[] result = new String[accepts.size()];
-		for (int i = 0; i < accepts.size(); i++) {
-			result[i] = accepts.get(i).getType().replaceAll("[*]", "\\\\w+");
-
+		ArrayList<String> resultList = new ArrayList<>();
+		for (AcceptHeaderType acc : accepts) {
+			String type = acc.getType().replaceAll("[*]", ".*");
+			resultList.add(type);
 		}
-
-		return result;
+		return resultList.toArray(new String[] {});
 	}
 
 	private static String mergeHeaders(Pair<String>[] headers) {
